@@ -1,0 +1,633 @@
+---
+title: "Airbnb Dashboard"
+author: "Seo Yoojin"
+output: 
+  flexdashboard::flex_dashboard:
+    theme: journal
+    orientation: rows
+    vertical_layout: scroll
+    
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(duckdb)
+library(plotly)
+library(glue)
+library(scales)
+library(leaflet)
+library(ggthemes)
+library(reactable)
+
+library(tidyverse)
+library(lubridate)
+library(padr)
+library(duckdb)
+library(DBI)
+library(shiny)
+library(leaflet.extras)
+library(shinyWidgets)
+```
+
+```{r}
+con1 <- dbConnect(duckdb())
+df_host_new <- read_csv("df_host_new.csv",col_types = readr::cols(
+    X1 = readr::col_double(),  
+    x = readr::col_double()))
+df_new_listing <- read_csv("df_new_listing.csv",col_types = readr::cols(
+    X1 = readr::col_double(),  
+    x = readr::col_double()))
+duckdb_register(con1,"host_info",df_host_new)
+duckdb_register(con1,"listing",df_new_listing)
+
+# Number of Listing ---------
+n_listing <- dbGetQuery(con1, 
+                        "SELECT COUNT(*) as freq 
+                   FROM listing")%>% 
+    pull(freq)
+
+# Number of Host -----
+n_host <- dbGetQuery(con1, 
+                     "SELECT COUNT(*) as freq 
+                   FROM host_info"
+)%>% 
+    pull(freq)
+
+# Number of Review ----------
+n_review <- dbGetQuery(con1, 
+                       "SELECT SUM(number_of_reviews) as freq 
+                   FROM listing"
+)%>% 
+    pull(freq)
+
+# Data for Map --------
+host_info_map <- dbGetQuery(con1, "SELECT name, listing_url, latitude, longitude, price, review_scores_rating, number_of_reviews, listing.host_id, host_info.host_name FROM listing
+LEFT JOIN host_info ON listing.host_id = host_info.host_id")%>% replace_na(list(description = "No Description", review_scores_rating = "No Rating Yet"
+))
+
+# Get different room type
+df_room_type <- dbGetQuery(con1, 
+                   "SELECT DISTINCT room_type 
+                  FROM listing")
+
+# Get different neighbourhood
+df_neighbour <- dbGetQuery(con1, 
+                   "SELECT DISTINCT neighbourhood_cleansed
+                   FROM listing")
+
+# Number of Superhost
+n_superhost <- dbGetQuery(con1,
+                   "SELECT COUNT(*) as frequency
+                   FROM host_info
+                   WHERE host_is_superhost =1 ") 
+                 
+# Number of Verified Host
+n_host_verified <- dbGetQuery(con1,
+                   "SELECT COUNT(*) as frequency
+                   FROM host_info
+                   WHERE host_identity_verified =1 "
+                   
+)
+
+# Number of Non-Verified Host
+n_host_non_verified <- dbGetQuery(con1,
+                   "SELECT COUNT(*) as frequency
+                   FROM host_info
+                   WHERE NOT host_identity_verified =1 "
+                   
+)
+```
+Airbnb Bangkok, Thailand {.sidebar}
+=====================================
+### About this dashboard 
+
+Airbnb, Inc. is an American company that operates an online marketplace for lodging, primarily homestays for vacation rentals, and tourism activities.On this dashboard you can explore information regarding the host and room listings available in Bangkok, Central Thailand, Thailand. All data is sourced from publicly available information from http://insideairbnb.com/get-the-data.html the Airbnb site. All monetary values are presented in local currency (Thailand Baht or THB)."
+
+
+Overview
+=====================================  
+Row {data-height=200}
+-----------------------------------------------------------------------
+### NUMBER OF ROOM LISTING
+```{r}
+valueBox(value=number(n_listing,big.mark=","), 
+         icon = "fa-bed", 
+         caption = "Number of Room Listing",
+         color = 'success')
+```
+
+### NUMBER OF HOST
+```{r}
+
+valueBox(value=number(n_host,big.mark=","), 
+         icon = "fa-user-alt", 
+         caption = "Number of Host",
+         color = "#41D0E6")
+```
+
+### TOTAL REVIEWS
+```{r}
+valueBox(value=number(n_review,big.mark=","), 
+         icon = "fa-comment", 
+         caption = "Total Reviews",
+         color = "#83E641")
+```
+
+Row {data-height=800}
+-----------------------------------------------------------------------
+
+### Map of Bangkok, Thailand
+```{r}
+popup <- paste0("<b>", host_info_map$name, "</b><br>",
+                        "Host Name: <b>", host_info_map$host_name, "</b><br>",
+                        "Price: THB <b>", number(host_info_map$price, big.mark = ","), "</b><br>",
+                        "Review Scores Rating: <b>", host_info_map$review_scores_rating , "</b><br>",
+                        "Number of Reviews: <b>", number(host_info_map$number_of_reviews, big.mark = ","), "</b><br>",
+                        "<a href=", host_info_map$listing_url, " target='_blank'> Click for more info</a>"
+        )
+
+leaflet(data = host_info_map) %>% 
+            addTiles() %>% 
+            addMarkers(lat = ~latitude, 
+                       lng = ~longitude,
+                       popup = popup,
+                       clusterOptions = markerClusterOptions())
+```
+
+Room Listing
+=====================================  
+Row {data-height=100}
+-----------------------------------------------------------------------
+### Different Room Type on Airbnb
+Airbnb hosts can list entire homes/apartments, private or shared rooms.  Airbnb provides detailed guides (https://www.airbnb.com/help/topic/1424/preparing-to-host) on how hosts could set up their places.
+
+Row {data-height=200}
+-----------------------------------------------------------------------
+###
+```{r}
+selectInput(inputId = "select_room", label = "Select Room Type", choices = c("All", df_room_type$room_type ))
+```   
+
+###
+```{r}
+selectInput(inputId = "select_cat", label = "Select Category", 
+                                                                  choices = list("Price" = "price",
+                                                                                 "Overall Rating" = "review_scores_rating",
+                                                                                 "Number of Review" = "number_of_reviews"
+                                                                  )
+                                                      )
+```   
+
+### 
+```{r}                                                    
+selectInput(inputId = "select_neighbour", label = "Select Neighbourhood",
+                                                              choices = c("All Region", sort(df_neighbour$neighbourhood_cleansed)),
+                                                              multiple = T,
+                                                              selected = "All Region"
+                                                              )
+```    
+
+Row {.tabset data-height=500}
+-----------------------------------------------------------------------
+### Room Type by Number of Listing
+```{r}
+plotlyOutput("listing_room_type", width = 800)
+
+```
+
+### Top 10 Room 
+```{r}
+plotlyOutput("listing_top", height = 500)
+```
+
+### Commonly provided ammenities
+```{r}
+ plotlyOutput("listing_amenities")
+```
+
+```{r}
+ # Top Room Type ------------
+    output$listing_room_type <- renderPlotly({
+        
+        out_db <- dbGetQuery(con1,
+                           "SELECT room_type, COUNT(*) as frequency, AVG(price) as mean_price
+                           FROM listing
+                           GROUP BY room_type
+                           ORDER BY COUNT(*) DESC"
+                           )%>% mutate(room_type = ifelse(room_type == "Entire home/apt", "Entire home/apartment", room_type))
+        
+
+        plot_ly(data = out_db, 
+                labels = ~room_type, values = ~frequency) %>% 
+            add_pie(hole = 0.6, 
+                    hovertemplate = paste0("<b>", out_db$room_type, "</b><br>",
+                                           "Number of Listing: ", number(out_db$frequency, big.mark = ','), "<br>",
+                                           "Average Price/Night : ",  number(out_db$mean_price, big.mark = ',', prefix = 'THB '),
+                                           "<extra></extra>"
+                                           )
+                    ) %>% 
+            layout(title = "<b>Room Type by Number of Listing</b>") %>% 
+            config(displayModeBar = F)
+        
+    })
+    
+    
+    
+    # Change input Tab 2--------------
+    ## If user select all region, other choices will be omitted
+    
+    observeEvent(input$select_neighbour, {
+        
+        if (length(input$select_neighbour) > 1 & "All Region" == input$select_neighbour[1]) {
+            
+            input_area <- input$select_neighbour[ input$select_neighbour != "All Region"]
+            
+            updateSelectInput(session,
+                              inputId = "select_neighbour", label = "Select Neighbourhood",
+                              choices = c("All Region", sort(df_neighbour$neighbourhood_cleansed)),
+                              selected = input_area
+            )
+        } else if(length(input$select_neighbour) > 1 & "All Region" != input$select_neighbour[1] & "All Region" %in% input$select_neighbour){ # All region is selected but not as the first one
+            
+            updateSelectInput(session,
+                              inputId = "select_neighbour", label = "Select Neighbourhood",
+                              choices = c("All Region", sort(df_neighbour$neighbourhood_cleansed)),
+                              selected = "All Region"
+            )
+            
+        }})
+      
+      output$listing_top <- renderPlotly({
+        
+        # User select all for select room type and select neighbourhood
+        if (input$select_room == "All" & ("All Region" %in% input$select_neighbour | length(input$select_neighbour) ==0)) {
+            query <- paste0("SELECT name, AVG(price) as price, AVG(review_scores_rating) as review_scores_rating, AVG(number_of_reviews) as number_of_reviews, host_info.host_name
+                           FROM listing
+                           LEFT JOIN host_info
+                           ON listing.host_id = host_info.host_id
+                           WHERE review_scores_rating IS NOT NULL AND number_of_reviews > 10
+                           GROUP BY name, host_info.host_name
+                           ORDER BY ", input$select_cat ," DESC
+                           LIMIT 10
+                            ")
+        } else if(input$select_room != "All" & ("All Region" %in% input$select_neighbour | length(input$select_neighbour) ==0)) { # user select all region but specific room type
+            
+            query <- paste0("SELECT name, AVG(price) as price, AVG(review_scores_rating) as review_scores_rating, AVG(number_of_reviews) as number_of_reviews, host_info.host_name
+                           FROM listing
+                           LEFT JOIN host_info
+                           ON listing.host_id = host_info.host_id
+                           WHERE room_type = '", input$select_room,"' AND review_scores_rating IS NOT NULL AND number_of_reviews > 10
+                           GROUP BY name, host_info.host_name
+                           ORDER BY ", input$select_cat ," DESC
+                           LIMIT 10
+                            ")
+        } else if(input$select_room == "All" & !("All Region" %in% input$select_neighbour)){ # User select all room type but specific neighbourhood 
+            
+            input_area <- input$select_neighbour %>%  
+                paste0("'", ., "'") %>% 
+                paste(collapse = ", ")
+            
+            query <- paste0("SELECT name, AVG(price) as price, AVG(review_scores_rating) as review_scores_rating, AVG(number_of_reviews) as number_of_reviews, host_info.host_name
+                           FROM listing
+                           LEFT JOIN host_info
+                           ON listing.host_id = host_info.host_id
+                           WHERE neighbourhood_cleansed IN(",  input_area ,") AND review_scores_rating IS NOT NULL AND number_of_reviews > 10
+                           GROUP BY name, host_info.host_name
+                           ORDER BY ", input$select_cat ," DESC
+                           LIMIT 10
+                            ")
+            
+        } else {
+            
+            input_area <- df_neighbour$neighbourhood_cleansed %>% 
+                head(3) %>% 
+                paste0("'", ., "'") %>% 
+                paste(collapse = ", ")
+            
+            query <- paste0("SELECT name, AVG(price) as price, AVG(review_scores_rating) as review_scores_rating, AVG(number_of_reviews) as number_of_reviews, host_info.host_name
+                           FROM listing
+                           LEFT JOIN host_info
+                           ON listing.host_id = host_info.host_id
+                           WHERE room_type = '", input$select_room,"' AND neighbourhood_cleansed IN(",  input_area ,") AND review_scores_rating IS NOT NULL AND number_of_reviews > 10
+                           GROUP BY name, host_info.host_name
+                           ORDER BY ", input$select_cat ," DESC
+                           LIMIT 10
+                            ")
+            
+        }
+
+        out_db <- dbGetQuery(con1, query)
+        
+        
+        clean_input <- input$select_cat %>% 
+            str_replace_all("_", " ") %>% 
+            str_to_title()
+            
+        out_db <- out_db %>% 
+            mutate(popup = glue("<b>{name}</b>
+                                Host: {host_name}
+                                Price: THB {number(price, big.mark = ',')}
+                                Rating: {round(review_scores_rating, 3)}
+                                Number of Reviews: {number(number_of_reviews, big.mark = ',')}
+                                ")) 
+        
+        p <- out_db %>% 
+            ggplot(aes(x = out_db[, input$select_cat], 
+                       y = name %>% reorder(out_db[ , input$select_cat]),
+                       fill = out_db[, input$select_cat],
+                       text = popup
+                       )
+                   ) +
+            geom_col(width = 0.75) +
+            scale_x_continuous(labels = number_format(big.mark = ",")) +
+            scale_fill_gradient(low = "dodgerblue4", high = "skyblue") +
+            labs(x = clean_input,
+                 y = NULL,
+                 title = "Top 10 Room Listing"
+                 ) +
+            theme_pander() +
+            theme(axis.text.y = element_text(size = 8)
+                  )
+        
+        ggplotly(p, tooltip = "text") %>% 
+            config(displayModeBar = F) %>% 
+            hide_colorbar()
+        
+    })
+    
+    # Top Amenities -----------
+    output$listing_amenities <- renderPlotly({
+        
+        if (input$select_room == "All" & ("All Region" %in% input$select_neighbour | length(input$select_neighbour) ==0)) {
+            query <- "SELECT amenities FROM listing"
+        } else if (input$select_room != "All" & ("All Region" %in% input$select_neighbour | length(input$select_neighbour) ==0)){
+            query <- paste0("SELECT amenities FROM listing
+                             WHERE room_type = '", input$select_room,"'"
+                            )
+        } else if(input$select_room == "All" & !("All Region" %in% input$select_neighbour)){
+            input_area <- input$select_neighbour %>%  
+                paste0("'", ., "'") %>% 
+                paste(collapse = ", ")
+            
+            query <- paste0("SELECT amenities FROM listing
+                             WHERE neighbourhood_cleansed IN(",  input_area , ")"
+                            )
+        } else {
+            input_area <- input$select_neighbour %>%  
+                paste0("'", ., "'") %>% 
+                paste(collapse = ", ")
+            
+            query <- paste0("SELECT amenities FROM listing
+                             WHERE neighbourhood_cleansed IN(",  input_area , ") AND room_type = '", input$select_room, "'"
+                            )
+        }
+        
+        out_db <- dbGetQuery(con1, query)
+        
+        
+        list_amenities <- map(out_db$amenities, function(x) x %>% strsplit(", ") %>% unlist() ) %>% 
+            unlist()
+        
+        df_amenities <- data.frame(amenities = list_amenities) %>% 
+            count(amenities, name = "frequency") %>% 
+            mutate(n_data = nrow(out_db),
+                   ratio = frequency/nrow(out_db),
+                   text_amenities = amenities %>% 
+                       str_replace_all(" ", "\n")
+                   )
+        
+        plot_ly(
+            data = df_amenities,
+            type = "treemap",
+            labels = ~text_amenities,
+            parents = "", 
+            hovertemplate = paste0("<b>", df_amenities$amenities, "</b><br>",
+                                   "Number of Listing with This Amenities: ", number(df_amenities$frequency, big.mark = ","), " (", percent(df_amenities$ratio, accuracy = 0.1), ")<br>",
+                                   "<extra></extra>"
+                                   ),
+            values = ~frequency
+            )  %>% 
+            layout(title = "<b>Commonly Provided Amenities</b>") %>% 
+            config(displayModeBar = F)
+        
+        
+        
+    })
+```
+
+
+
+Host 
+=====================================  
+Row {data-height=150}
+-----------------------------------------------------------------------
+### Airbnb Host Partner
+Airbnb hosts are required to <a href=  https://www.airbnb.com/help/article/1237/verifying-your-identity target='_blank'> confirm their identity</a> such as their name, address, phone, etc.  <a href= https://www.airbnb.com/help/article/828/what-is-a-superhost target='_blank'>Superhosts</a> are experienced hosts 
+who provide a shining example for other hosts, and extraordinary experiences for their guests.
+
+
+<b>Total earning</b> gained by hosts are calculated by the total product of their <b>listing price</b>, 
+                                                       <b>number of reviews </b> to represent the number of customers, and 
+                                                       the <b> minimum night</b> to represent the number of night stays.
+                                                       
+Row {data-height=200}
+-----------------------------------------------------------------------
+### SUPERHOST
+```{r}
+renderValueBox({
+  valueBox(value=number(n_superhost$frequency,big.mark=","),icon="fa-star",caption="Superhost", color="#FFCC99")
+})
+```
+
+### VERIFIED HOST
+```{r}
+renderValueBox({
+  valueBox(value=number(n_host_verified$frequency,big.mark=","),icon="fa-check",caption="Verified Host", color="#99FF99")
+})
+```
+
+### UNVERIFIED HOST 
+```{r}
+renderValueBox({
+  valueBox(value=number(n_host_non_verified$frequency,big.mark=","),icon="fa-times",caption="Unverified Host", color="#FF6666")
+})
+```
+
+Row {.tabset data-height=600}
+-----------------------------------------------------------------------
+
+### Number of Host Joined Over Time
+```{r}
+plotlyOutput("host_join")
+
+  # Host Join Timeline -----------
+    output$host_join <- renderPlotly({
+        
+        query <- "SELECT MONTHNAME(host_since) as month, YEAR(host_since) as year,  COUNT(*) as frequency
+        FROM host_info
+        WHERE host_since IS NOT NULL
+        GROUP BY month, year"
+        
+        out_db <- dbGetQuery(con1, query)
+        
+        p <- out_db %>% 
+            mutate(date = paste0(year, "-", month, "-1") %>% 
+                       ymd()
+            ) %>% 
+            pad(interval = "month",
+                start_val = ymd( paste0(min(.$year), "-1-1") )
+                ) %>% 
+            mutate(month = month(date, label = T, abbr = F),
+                   year = year(date)
+                   ) %>% 
+            replace_na(list(frequency = 0)) %>% 
+            
+            ggplot(aes(x = year,
+                       y = month,
+                       fill = frequency, 
+                       text = glue("Year: {year}
+                         Month: {month}
+                         Number of Host Joined: {frequency}")
+                       )
+                   ) +
+            geom_tile(color = "white") +
+            scale_x_continuous(breaks = seq(2000, 2025, 2) ) +
+            theme_pander() +
+            scale_fill_viridis_c(option = "B") +
+            labs(x = "Year",
+                 y = NULL,
+                 fill = "Frequency",
+                 title = "Number of Host Joined Over Time")
+        
+        ggplotly(p, tooltip = "text") %>% 
+            config(displayModeBar = F) 
+        
+    })
+
+
+                                       
+```
+
+### Commonly Given Verification Identity
+```{r}
+plotlyOutput("host_verification")
+
+# Commonly Identified Information -------------------------
+    output$host_verification <- renderPlotly({
+        
+        out_db <- dbGetQuery(con1,
+                           "SELECT host_id, host_name, host_verifications, host_identity_verified
+                           FROM host_info
+                           WHERE host_identity_verified IS NOT NULL AND host_verifications IS NOT NULL
+                           "
+        )
+        
+        
+        out_db <- out_db %>% 
+            mutate(host_verifications = tolower(host_verifications))
+        
+        list_verification <- map(out_db$host_verifications, function(x) x %>% strsplit(", ") %>% unlist() ) %>% 
+            unlist() %>% str_remove_all('"')
+        
+        host_info_verify <- data.frame(verification = list_verification) %>% 
+            count(verification, name = "frequency") %>% 
+            mutate(n_data = nrow(out_db),
+                   ratio = frequency/nrow(out_db),
+                   verification = verification %>% 
+                       str_replace_all("_", " ") %>% 
+                       str_to_title(),
+                   text_verification = verification %>% 
+                       str_replace_all(" ", "\n")
+                   )
+        
+        plot_ly(
+            data = host_info_verify,
+            type = "treemap",
+            labels = ~text_verification,
+            parents = "", 
+            hovertemplate = paste0("<b>", host_info_verify$verification, "</b><br>",
+                                   "Number of Host with This Identity Information: ", number(host_info_verify$frequency, big.mark = ","), " (", percent(host_info_verify$ratio, accuracy = 0.1), ")<br>",
+                                   "<extra></extra>"
+            ),
+            values = ~frequency
+        )  %>% 
+            layout(title = "<b>Commonly Given Verification Identity</b>") %>% 
+            config(displayModeBar = F)
+        
+        
+    })
+
+
+```
+
+### Top 50 Host by Total Earning
+````{r}
+ui<-column(height=12,width=12, h2("Top 50 Host by Total Earning"),
+checkboxInput(inputId = "select_superhost", label = "Include Superhost", value = T),
+reactableOutput("host_top"))
+                                              
+                                       
+
+
+server<- shinyServer(function(input, output,session) { output$host_top <- renderReactable({
+    
+    if (input$select_superhost == T) {
+      
+      out_db <- dbGetQuery(con1,"SELECT listing.host_id, host_info.host_name, host_info.host_since,  host_info.host_is_superhost, host_info.host_identity_verified, COUNT(*) as number_of_listing, SUM( price * number_of_reviews * minimum_nights ) as earning, host_info.host_url
+                FROM listing
+                LEFT JOIN host_info
+                ON listing.host_id = host_info.host_id
+                WHERE host_info.host_since IS NOT NULL
+                GROUP BY listing.host_id, host_info.host_name, host_info.host_since, host_info.host_is_superhost, host_info.host_identity_verified, host_info.host_url
+                ORDER BY earning DESC
+                LIMIT 50")
+    } else {
+      
+      out_db <- dbGetQuery(con1,"SELECT listing.host_id, host_info.host_name, host_info.host_since,  host_info.host_is_superhost, host_info.host_identity_verified, COUNT(*) as number_of_listing, SUM( price * number_of_reviews * minimum_nights ) as earning, host_info.host_url
+                FROM listing
+                LEFT JOIN host_info
+                ON listing.host_id = host_info.host_id
+                WHERE host_info.host_is_superhost = 0 AND host_info.host_since IS NOT NULL
+                GROUP BY listing.host_id, host_info.host_name, host_info.host_since, host_info.host_is_superhost, host_info.host_identity_verified, host_info.host_url
+                ORDER BY earning DESC
+                LIMIT 50")
+    }
+    
+    reactable(out_db, 
+              striped = T, highlight = T,
+              columns = list(host_id = colDef(name = "Host ID",),
+                             host_name = colDef(name = "Host Name",
+                                                cell = function(value, index){
+                                                  url <- sprintf("%s", out_db[index, "host_url"])
+                                                  tags$a(href = url, value)
+                                                }
+                             ),
+                             host_since = colDef(name = "Host Since"),
+                             number_of_listing = colDef(name = "Number of Listing", minWidth = 100,
+                                                        style = list(fontFamily = "monospace")
+                             ),
+                             earning = colDef(name = "Total Earning", 
+                                              format = colFormat(separators = T),
+                                              style = list(fontFamily = "monospace")
+                             ),
+                             host_is_superhost = colDef(name = "Superhost",
+                                                        minWidth = 100,
+                                                        cell = function(value, index){
+                                                          if (value == 0) "\u2718" else "\u2713"
+                                                        }
+                             ),
+                             host_identity_verified = colDef(name = "Identity Verified",
+                                                             minWidth = 100,
+                                                             cell = function(value, index){
+                                                               if (value == 0) "\u2718" else "\u2713"
+                                                             }
+                             ),
+                             host_url = colDef(show = F)
+              )
+              
+    )
+    
+  })})
+shinyApp(ui,server)
+```
